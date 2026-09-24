@@ -88,6 +88,25 @@ namespace ParallelEdit.Core
             return text.ToUsfm();
         }
 
+        /// <summary>Edits whose verse no longer exists in the given USFM (e.g. it became a bridge elsewhere).</summary>
+        public static List<PendingEdit> Missing(string usfm, IEnumerable<PendingEdit> edits)
+        {
+            var text = ChapterText.Parse(usfm);
+            return edits.Where(e => text.FindByKey(e.SegmentKey) == null).ToList();
+        }
+
+        /// <summary>True when both chapters split into the same prefix and segments (so cells built on one fit the other).</summary>
+        public static bool SameStructure(ChapterText a, ChapterText b)
+        {
+            if (a.Prefix != b.Prefix || a.Segments.Count != b.Segments.Count) return false;
+            for (int i = 0; i < a.Segments.Count; i++)
+            {
+                var x = a.Segments[i]; var y = b.Segments[i];
+                if (x.Lead != y.Lead || x.VerseMarker != y.VerseMarker || x.Body != y.Body) return false;
+            }
+            return true;
+        }
+
         /// <summary>Call after a successful write of exactly the in-memory text; keeps segment objects so open cells stay valid.</summary>
         public void MarkWrittenSameText(string usfm)
         {

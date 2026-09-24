@@ -15,6 +15,8 @@ function Test-Admin {
     ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# a trailing backslash would escape the closing quote when the path is passed to the elevated step
+$ParatextDir = $ParatextDir.TrimEnd('\')
 if (-not (Test-Path (Join-Path $ParatextDir "Paratext.exe"))) { throw "Paratext 9 not found in $ParatextDir (use -ParatextDir)." }
 if (Get-Process Paratext -ErrorAction SilentlyContinue) { throw "Please close Paratext first, then run this again." }
 
@@ -22,6 +24,7 @@ if (-not $Uninstall -and -not $Built) {
     $dotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source
     $userDotnet = Join-Path $env:USERPROFILE ".dotnet\dotnet.exe"
     if (Test-Path $userDotnet) { $dotnet = $userDotnet }
+    if (-not $dotnet -and -not $NoBuild) { throw "The .NET SDK was not found. Install it from https://dotnet.microsoft.com/download (or use -NoBuild with an existing build)." }
     $project = Join-Path $PSScriptRoot "src\ParallelEdit\ParallelEdit.csproj"
     if (-not $NoBuild) {
         & $dotnet build $project -c Release -nologo -v q "-p:ParatextInstallDir=$ParatextDir"

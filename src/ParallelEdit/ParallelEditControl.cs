@@ -34,7 +34,7 @@ namespace ParallelEdit
             view.ReferenceChangedByUser += ToParatext;
 
             parent.VerseRefChanged += (w, oldRef, newRef) => OnUi(() => FromParatext(newRef));
-            parent.SaveRequested += w => view.SaveAll();
+            parent.SaveRequested += w => OnUi(() => view.SaveAll());
             parent.WindowClosing += Parent_WindowClosing;
             parent.ProjectChanged += (w, project) => OnUi(() =>
             {
@@ -42,7 +42,15 @@ namespace ParallelEdit
                 list.Insert(0, Wrap(project));
                 view.SetTexts(list);
             });
-            host.ShuttingDown += (s, e) => OnUi(() => view.SaveAll());
+            host.ShuttingDown += (s, e) =>
+            {
+                // must run now (not posted) so a failed save can still cancel the shutdown
+                bool ok = true;
+                if (IsDisposed) return;
+                if (InvokeRequired) Invoke((Action)(() => ok = SaveOrConfirmLoss()));
+                else ok = SaveOrConfirmLoss();
+                if (!ok) e.Cancel = true;
+            };
 
             var saved = PluginState.Parse(state);
             var all = host.GetAllProjects(true);
@@ -114,10 +122,16 @@ namespace ParallelEdit
 
         void Parent_WindowClosing(IPluginChildWindow sender, CancelEventArgs args)
         {
-            if (view.SaveAll()) return;
+            if (!SaveOrConfirmLoss()) args.Cancel = true;
+        }
+
+        /// <summary>Saves everything; if something could not be saved, asks whether to lose it. False = stay open.</summary>
+        bool SaveOrConfirmLoss()
+        {
+            if (view.SaveAll()) return true;
             var answer = MessageBox.Show(this, "Some changes could not be saved. Close anyway and lose them?", ParallelEditPlugin.PluginName,
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
-            if (answer != DialogResult.Yes) args.Cancel = true;
+            return answer == DialogResult.Yes;
         }
 
         void OnUi(Action a)

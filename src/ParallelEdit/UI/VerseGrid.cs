@@ -40,6 +40,8 @@ namespace ParallelEdit.UI
             public string EditStartText;
             /// <summary>Set when focusing swapped in the raw text, so the click that caused it can place the caret.</summary>
             public bool JustRevealed;
+            /// <summary>True while the cell shows raw USFM for editing; only then may its text be saved.</summary>
+            public bool Editing;
             internal VerseGrid Grid;
 
             protected override void WndProc(ref Message m)
@@ -179,6 +181,8 @@ namespace ParallelEdit.UI
                         box.TextChanged += Box_TextChanged;
                         box.MouseDown += Box_MouseDown;
                         box.MouseUp += Box_MouseUp;
+                        // typing before the mouse button came up: show the raw text first
+                        box.KeyDown += (s, e) => { var b = (CellBox)s; if (b.JustRevealed) Reveal(b, b.SelectionStart); };
                         rv.Cells[col] = box;
                         controls.Add(box);
                     }
@@ -240,7 +244,16 @@ namespace ParallelEdit.UI
             {
                 string rawN = raw.Replace("\r\n", "\n");
                 int cleanN = cleanCaret - shown.Substring(0, Math.Min(cleanCaret, shown.Length)).Split('\r').Length + 1;
-                int caret = ChapterText.MapCleanToRaw(shown.Replace("\r\n", "\n"), cleanN, rawN);
+                string cleanShown = shown.Replace("\r\n", "\n");
+                int caret;
+                // A verse cell's clean text is only the verse text; its raw text starts with the heading/paragraph
+                // markers and "\v N ". Map inside the verse text, then add that prefix.
+                string prefix = box.Info.Part == SegmentPart.Whole && box.Info.Segment != null
+                    ? (box.Info.Segment.Lead + box.Info.Segment.VerseMarker).Replace("\r\n", "\n") : "";
+                if (prefix.Length > 0 && rawN.StartsWith(prefix))
+                    caret = prefix.Length + ChapterText.MapCleanToRaw(cleanShown, cleanN, rawN.Substring(prefix.Length));
+                else
+                    caret = ChapterText.MapCleanToRaw(cleanShown, cleanN, rawN);
                 // the box uses CRLF line breaks; add one position per line break before the caret
                 int lines = rawN.Substring(0, caret).Split('\n').Length - 1;
                 box.Text = raw;
@@ -250,6 +263,7 @@ namespace ParallelEdit.UI
             box.SelectionLength = 0;
             suppressEvents = false;
             box.EditStartText = box.Text;
+            box.Editing = true;
             LayoutRows();
         }
 
@@ -270,13 +284,15 @@ namespace ParallelEdit.UI
             var box = (CellBox)sender;
             if (suppressEvents || box.IsDisposed) return;
             if (!box.Info.Editable) return;
-            if (box.JustRevealed)
+            if (!box.Editing)
             {
-                // focus left before the raw text was ever shown: nothing was edited
+                // focus left before the raw text was ever shown: nothing was edited, and the clean
+                // text in the box must never be saved as USFM
                 box.JustRevealed = false;
                 box.BackColor = Theme.EditableBack;
                 return;
             }
+            box.Editing = false;
             box.BackColor = Theme.EditableBack;
             string edited = box.Text;
             bool changed = edited != box.EditStartText;
@@ -302,7 +318,7 @@ namespace ParallelEdit.UI
         public void CommitFocused()
         {
             var box = FocusedCell;
-            if (box == null || !box.Info.Editable || box.Text == box.EditStartText) return;
+            if (box == null || !box.Info.Editable || !box.Editing || box.Text == box.EditStartText) return;
             string edited = box.Text;
             box.EditStartText = edited;
             CellCommitted?.Invoke(box, edited);
@@ -315,6 +331,8 @@ namespace ParallelEdit.UI
             if (row < 0 || row >= rows.Count || col < 0 || col >= rows[row].Cells.Length) return;
             var box = rows[row].Cells[col];
             box.Focus();
+            // focused programmatically while a mouse button may be down: no MouseUp will come to reveal it
+            if (box.JustRevealed) Reveal(box, 0);
             box.SelectionStart = Math.Min(selectionStart, box.TextLength);
             box.SelectionLength = 0;
         }

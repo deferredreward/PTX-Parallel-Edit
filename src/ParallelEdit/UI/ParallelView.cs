@@ -90,20 +90,24 @@ namespace ParallelEdit.UI
             TextsChanged?.Invoke();
         }
 
-        /// <summary>Shows a reference (from Paratext or the toolbar). Saves pending edits before changing chapter.</summary>
-        public void GoTo(VerseRef r)
+        /// <summary>
+        /// Shows a reference (from Paratext or the toolbar). Saves pending edits before changing chapter.
+        /// Returns false when the view stayed where it was (unsaved edits the user chose to keep).
+        /// </summary>
+        public bool GoTo(VerseRef r)
         {
-            if (r.Book <= 0 || r.Chapter <= 0) return;
+            if (r.Book <= 0 || r.Chapter <= 0) return false;
             bool sameChapter = loaded && r.SameChapter(current);
             if (!sameChapter)
             {
-                if (!SaveAll() && !ConfirmDiscard()) return;
+                if (!SaveAll() && !ConfirmDiscard()) return false;
                 cache.Clear();
             }
             current = r;
             refBox.Text = Books.Code(r.Book) + " " + r.Chapter + ":" + r.Verse;
             if (sameChapter) grid.HighlightVerse(r.Verse, scroll: true);
             else { loaded = true; Rebuild(scroll: true); }
+            return true;
         }
 
         LoadedChapter GetChapter(ITextSource src, int book, int chapter)
@@ -205,9 +209,11 @@ namespace ParallelEdit.UI
             {
                 lc.Edit(cell.Segment, cell.Part, newRaw);
             }
-            catch (FormatException e)
+            catch (Exception e) when (e is FormatException || e is ArgumentException)
             {
-                MessageBox.Show(this, e.Message + "\n\nYour change to this verse was not kept.", "Parallel Edit",
+                // ArgumentException: the cell belonged to a chapter that was re-read while it had focus
+                string why = e is FormatException ? e.Message : "This chapter was reloaded while you were typing.";
+                MessageBox.Show(this, why + "\n\nYour change to this verse was not kept.", "Parallel Edit",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 BeginInvoke((Action)grid.RefreshTexts);
                 return;
@@ -229,16 +235,25 @@ namespace ParallelEdit.UI
             {
                 if (IsDisposed) return;
                 var focused = grid.FocusedCell;
-                int row = -1, col = -1, sel = 0;
+                int col = -1, sel = 0;
+                VerseRef focusRef = default;
+                bool focusHeading = false;
                 if (focused != null)
                 {
-                    row = grid.Rows.ToList().IndexOf(focused.Row);
+                    focusRef = focused.Row.Info.Ref;
+                    focusHeading = focused.Row.Info.IsHeading;
                     col = focused.Column;
                     sel = focused.SelectionStart;
                     grid.CommitFocused();
                 }
                 if (reload != null) cache.Remove(reload.Source.Id + "|" + reload.Book + "|" + reload.Chapter);
-                Rebuild(scroll: false, focusRow: row, focusCol: col, selection: sel);
+                Rebuild(scroll: false);
+                if (focused != null)
+                {
+                    // find the same verse again: row numbers shift when a merge added or removed rows
+                    int row = grid.Rows.ToList().FindIndex(r => r.Info.Ref.Equals(focusRef) && r.Info.IsHeading == focusHeading);
+                    if (row >= 0) grid.FocusCell(row, col, sel);
+                }
             }));
         }
 
@@ -248,15 +263,34 @@ namespace ParallelEdit.UI
             catch { return false; }
         }
 
+        bool saving;
+
         /// <summary>Writes one chapter's pending edits. Returns false when nothing could be written.</summary>
         bool Save(LoadedChapter lc, out bool structureChanged)
         {
             structureChanged = false;
             if (!lc.IsDirty) return true;
-            string written = null;
+            // A dialog shown during a save pumps messages; a focus change can ask to save again. Let the outer save finish.
+            if (saving) return false;
+            saving = true;
+            try { return SaveCore(lc, out structureChanged); }
+            finally { saving = false; }
+        }
+
+        bool SaveCore(LoadedChapter lc, out bool structureChanged)
+        {
+            structureChanged = false;
+            string written = null, refused = null;
             bool cancelled = false;
             string error = lc.Source.WriteChapter(lc.Book, lc.Chapter, fresh =>
             {
+                var missing = LoadedChapter.Missing(fresh, lc.Pending.Values);
+                if (missing.Count > 0)
+                {
+                    refused = "verse " + string.Join(", ", missing.Select(m => m.SegmentKey.Split('#')[0]).Distinct()) +
+                              " is no longer in the project the way this window loaded it (it may have been renumbered, joined or deleted elsewhere).";
+                    return null;
+                }
                 string merged = lc.Merge(fresh, out var conflicts);
                 if (conflicts.Count > 0)
                 {
@@ -272,6 +306,14 @@ namespace ParallelEdit.UI
                 return merged;
             });
 
+            if (refused != null)
+            {
+                SetStatus($"Not saved: {lc.Source.ShortName} changed elsewhere", true);
+                MessageBox.Show(this, $"Could not save {lc.Source.ShortName} {Books.Code(lc.Book)} {lc.Chapter}: {refused}\n\n" +
+                    "Your change is still shown in this window. Copy it, move to another chapter and back to reload, then apply it again.",
+                    "Parallel Edit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
             if (cancelled) { SetStatus("Not saved yet", true); return false; }
             if (error != null)
             {
@@ -280,9 +322,14 @@ namespace ParallelEdit.UI
                     "Parallel Edit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
-            structureChanged = written != lc.Text.ToUsfm();
-            if (structureChanged) lc.MarkWritten(written);
-            else lc.MarkWrittenSameText(written);
+            // Remember what Paratext actually stored (it normalizes whitespace), so the next save compares against it.
+            string stored;
+            try { stored = lc.Source.GetChapterUsfm(lc.Book, lc.Chapter) ?? written; }
+            catch (Exception) { stored = written; }
+            if (LoadedChapter.SameStructure(ChapterText.Parse(stored), lc.Text)) lc.MarkWrittenSameText(stored);
+            else { lc.MarkWritten(stored); structureChanged = true; }
+            // other cells can show the same verse (heading row and verse cell)
+            grid.RefreshTexts();
             SetStatus($"Saved {lc.Source.ShortName} {Books.Code(lc.Book)} {lc.Chapter}", false);
             return true;
         }
@@ -301,7 +348,7 @@ namespace ParallelEdit.UI
             return ok;
         }
 
-        public bool HasUnsavedEdits => cache.Values.Any(c => c.IsDirty) || (grid.FocusedCell is VerseGrid.CellBox b && b.Info.Editable && b.Text != b.EditStartText);
+        public bool HasUnsavedEdits => cache.Values.Any(c => c.IsDirty) || (grid.FocusedCell is VerseGrid.CellBox b && b.Info.Editable && b.Editing && b.Text != b.EditStartText);
 
         void Source_ScriptureChanged(int book, int chapter)
         {
@@ -327,8 +374,7 @@ namespace ParallelEdit.UI
             int ch = current.Chapter + delta;
             if (ch < 1) return;
             var r = new VerseRef(current.Book, ch, 1);
-            GoTo(r);
-            ReferenceChangedByUser?.Invoke(r);
+            if (GoTo(r)) ReferenceChangedByUser?.Invoke(r);
         }
 
         void RefBox_KeyDown(object sender, KeyEventArgs e)
@@ -337,8 +383,7 @@ namespace ParallelEdit.UI
             e.SuppressKeyPress = true;
             if (Books.TryParse(refBox.Text, out var r))
             {
-                GoTo(r);
-                ReferenceChangedByUser?.Invoke(r);
+                if (GoTo(r)) ReferenceChangedByUser?.Invoke(r);
                 grid.Focus();
             }
             else SetStatus("Could not read that reference. Try e.g. MRK 3 or JHN 3:16", true);

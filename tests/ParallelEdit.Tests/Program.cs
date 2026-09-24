@@ -29,6 +29,7 @@ namespace ParallelEdit.Tests
             Run(nameof(NoVersesMeansPrefixOnly), NoVersesMeansPrefixOnly);
             Run(nameof(CaretMapsFromCleanToRaw), CaretMapsFromCleanToRaw);
             Run(nameof(WholeVerseEditing), WholeVerseEditing);
+            Run(nameof(SafetyChecksForSaving), SafetyChecksForSaving);
 
             if (args.Length > 0) RoundTripFolder(args[0]);
 
@@ -211,6 +212,26 @@ namespace ParallelEdit.Tests
             threw = false;
             try { t.Segments[0].Set(SegmentPart.Whole, "\\v 10 x\n"); } catch (FormatException) { threw = true; }
             Eq(true, threw, "v1 vs v10");
+        }
+
+        static void SafetyChecksForSaving()
+        {
+            var lc = Loaded(Mark1);
+            lc.Edit(lc.Text.FindVerse(1), SegmentPart.Body, "Mine.\n");
+            // verse 1 became part of a bridge elsewhere: the edit has nowhere to go and must be reported, not dropped
+            string bridged = Mark1.Replace("\\v 1 Aa", "\\v 1-2 Aa").Replace("\\v 2 Shina", "Shina");
+            Eq(1, LoadedChapter.Missing(bridged, lc.Pending.Values).Count, "missing after bridge");
+            Eq(1, LoadedChapter.Missing("", lc.Pending.Values).Count, "missing when chapter is empty");
+            Eq(0, LoadedChapter.Missing(Mark1, lc.Pending.Values).Count, "present");
+
+            // whitespace normalized by Paratext counts as a different structure, so the view re-reads it
+            var a = ChapterText.Parse(Mark1);
+            Eq(true, LoadedChapter.SameStructure(a, ChapterText.Parse(Mark1)), "same");
+            Eq(false, LoadedChapter.SameStructure(a, ChapterText.Parse(Mark1.Replace("\\p\n\\v 2", "\\p \\v 2"))), "whitespace differs");
+            // a heading typed at the end of verse 3 belongs to verse 4 after re-parsing
+            var edited = ChapterText.Parse(Mark1);
+            edited.Segments[2].Body += "\\s New\n";
+            Eq(false, LoadedChapter.SameStructure(ChapterText.Parse(edited.ToUsfm()), edited), "heading moves on re-parse");
         }
 
         static void NoVersesMeansPrefixOnly()
