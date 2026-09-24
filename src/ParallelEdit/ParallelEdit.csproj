@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>Library</OutputType>
+    <LangVersion>10</LangVersion>
+    <RootNamespace>ParallelEdit</RootNamespace>
+    <AssemblyName>ParallelEdit</AssemblyName>
+    <Version>1.0.0</Version>
+    <Company>unfoldingWord</Company>
+    <Product>Parallel Edit</Product>
+    <Description>Paratext 9 plugin: verse-by-verse parallel view and editing of several texts.</Description>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <GenerateResourceUsePreserializedResources>false</GenerateResourceUsePreserializedResources>
+    <!-- Where Paratext 9 is installed; the plugin API assemblies are referenced from there. -->
+    <ParatextInstallDir Condition="'$(ParatextInstallDir)' == ''">C:\Program Files\Paratext 9</ParatextInstallDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="PluginInterfaces">
+      <HintPath>$(ParatextInstallDir)\PluginInterfaces.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CorePluginInterfaces">
+      <HintPath>$(ParatextInstallDir)\CorePluginInterfaces.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="EmbeddedUiPluginInterfaces">
+      <HintPath>$(ParatextInstallDir)\EmbeddedUiPluginInterfaces.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
