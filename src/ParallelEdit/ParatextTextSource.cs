@@ -84,7 +84,8 @@ namespace ParallelEdit
                 if (fromVers.Type == toVers.Type && !fromVers.IsCustomized && !toVers.IsCustomized)
                     return true;
                 var r = fromVers.CreateReference(book, chapter, verse);
-                if (r == null) return true; // verse outside the anchor's versification: assume the same number
+                // verse outside the anchor's versification: no safe mapping, so show nothing rather than a guess
+                if (r == null) return false;
                 var mapped = r.ChangeVersification(toVers);
                 if (mapped == null || mapped.BookNum != book) return false;
                 mappedChapter = mapped.ChapterNum;
@@ -93,7 +94,7 @@ namespace ParallelEdit
             }
             catch (Exception)
             {
-                return true;
+                return false; // a failed mapping must not put another verse's text (and edits) in this row
             }
         }
 

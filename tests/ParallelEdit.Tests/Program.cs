@@ -149,6 +149,7 @@ namespace ParallelEdit.Tests
             Books.TryParse("1CO 13", out r);
             Eq(new VerseRef(46, 13, 1), r, "1CO 13");
             Eq(false, Books.TryParse("ZZZ 1", out _), "bad book");
+            Eq(false, Books.TryParse("MRK 999999999999999999999", out _), "oversized chapter");
             Eq("REV", Books.Code(66), "REV");
             Eq("XXA", Books.Code(93), "XXA");
         }

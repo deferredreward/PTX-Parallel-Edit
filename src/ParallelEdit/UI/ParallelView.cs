@@ -234,7 +234,7 @@ namespace ParallelEdit.UI
             BeginInvoke((Action)(() =>
             {
                 if (IsDisposed) return;
-                var focused = grid.FocusedCell;
+                var focused = grid.EditingCell ?? grid.FocusedCell; // commit typing even if focus moved to another window
                 int col = -1, sel = 0;
                 VerseRef focusRef = default;
                 bool focusHeading = false;
@@ -362,7 +362,7 @@ namespace ParallelEdit.UI
                 {
                     if (lc.Book != current.Book || (chapter != 0 && lc.Chapter != chapter)) continue;
                     if (lc.IsDirty) continue;                               // our save will merge
-                    if (focused != null && focused.Info.Chapter == lc) continue; // user is in it; checked on leave
+                    if ((focused != null && focused.Info.Chapter == lc) || grid.EditingCell?.Info.Chapter == lc) continue; // user is in it; checked on leave
                     if (IsStale(lc)) { cache.Remove(lc.Source.Id + "|" + lc.Book + "|" + lc.Chapter); reload = true; }
                 }
                 if (reload) RebuildKeepingFocus();

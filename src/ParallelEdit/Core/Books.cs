@@ -31,8 +31,9 @@ namespace ParallelEdit.Core
             if (!m.Success) return false;
             int book = Number(m.Groups[1].Value);
             if (book == 0) return false;
-            int ch = m.Groups[2].Success ? int.Parse(m.Groups[2].Value) : 1;
-            int v = m.Groups[3].Success ? int.Parse(m.Groups[3].Value) : 1;
+            int ch = 1, v = 1;
+            if (m.Groups[2].Success && !int.TryParse(m.Groups[2].Value, out ch)) return false;
+            if (m.Groups[3].Success && !int.TryParse(m.Groups[3].Value, out v)) return false;
             result = new VerseRef(book, Math.Max(1, ch), Math.Max(1, v));
             return true;
         }

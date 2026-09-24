@@ -124,7 +124,7 @@ namespace ParallelEdit.UI
             {
                 if (showMarkers == value) return;
                 showMarkers = value;
-                foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused) c.Text = DisplayText(c, false);
+                foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused && !c.Editing) c.Text = DisplayText(c, false);
                 LayoutRows();
             }
         }
@@ -212,7 +212,7 @@ namespace ParallelEdit.UI
         public void RefreshTexts()
         {
             suppressEvents = true;
-            foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused) c.Text = DisplayText(c, false);
+            foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused && !c.Editing) c.Text = DisplayText(c, false);
             suppressEvents = false;
             LayoutRows();
         }
@@ -317,7 +317,7 @@ namespace ParallelEdit.UI
         /// <summary>Commits the focused cell (if any) so pending typing is not lost, e.g. before saving or navigating.</summary>
         public void CommitFocused()
         {
-            var box = FocusedCell;
+            var box = EditingCell ?? FocusedCell;
             if (box == null || !box.Info.Editable || !box.Editing || box.Text == box.EditStartText) return;
             string edited = box.Text;
             box.EditStartText = edited;
@@ -325,6 +325,9 @@ namespace ParallelEdit.UI
         }
 
         public CellBox FocusedCell => rows.SelectMany(r => r.Cells).FirstOrDefault(c => c.Focused);
+
+        /// <summary>The cell showing raw USFM for editing, even if keyboard focus has moved to another window.</summary>
+        public CellBox EditingCell => rows.SelectMany(r => r.Cells).FirstOrDefault(c => c.Editing);
 
         public void FocusCell(int row, int col, int selectionStart)
         {
