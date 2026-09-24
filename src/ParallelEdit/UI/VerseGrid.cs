@@ -85,14 +85,31 @@ namespace ParallelEdit.UI
             {
                 if (!ReadOnly && (keyData == (Keys.Shift | Keys.Insert) || keyData == (Keys.Control | Keys.V)))
                 {
-                    if (Clipboard.ContainsText()) SelectedText = Clipboard.GetText(TextDataFormat.UnicodeText);
+                    PastePlain();
                     return true;
                 }
                 return base.ProcessCmdKey(ref msg, keyData);
             }
 
+            /// <summary>Pastes only the clipboard's plain text, so formatting or embedded objects never reach the USFM.</summary>
+            void PastePlain()
+            {
+                if (JustRevealed) Grid?.Reveal(this, SelectionStart); // mouse still down on a new cell: show the raw text first
+                try
+                {
+                    if (Clipboard.ContainsText()) SelectedText = Clipboard.GetText(TextDataFormat.UnicodeText);
+                }
+                catch (System.Runtime.InteropServices.ExternalException) { /* another program holds the clipboard */ }
+            }
+
             protected override void WndProc(ref Message m)
             {
+                const int WM_PASTE = 0x0302;
+                if (m.Msg == WM_PASTE)
+                {
+                    if (!ReadOnly) PastePlain();
+                    return;
+                }
                 if (m.Msg == WM_MOUSEWHEEL && Grid != null)
                 {
                     Grid.ScrollByWheel((short)((long)m.WParam >> 16));
@@ -244,7 +261,8 @@ namespace ParallelEdit.UI
         static string RawDisplayText(CellInfo info) => (info.RawText ?? "").Replace("\r\n", "\n");
 
         /// <summary>Sets a box's text with no per-character formatting: the box's own font/color, left-aligned, no indents.</summary>
-        static void SetPlainText(CellBox box, string text) => SetRtf(box, RtfBuilder.PlainDocument(text ?? "", box.Font, box.ForeColor));
+        static void SetPlainText(CellBox box, string text) =>
+            SetRtf(box, RtfBuilder.PlainDocument(text ?? "", box.Font, box.ForeColor, box.RightToLeft == RightToLeft.Yes));
 
         /// <summary>
         /// Assigns Rtf and resets the caret/scroll to the top. Without this, a box that is still its
@@ -285,8 +303,9 @@ namespace ParallelEdit.UI
             // like Unformatted, the verse cell holds the verse's whole USFM, headings and paragraph markers included
             var paragraphs = StyledText.Parse(info.Segment?.Get(info.Part) ?? "", null);
             var styles = info.Chapter?.Source?.MarkerStyles ?? NoStyles;
-            int widthTwips = (int)Math.Max(0, (box.Width / (float)Math.Max(1, DeviceDpi)) * 1440);
-            SetRtf(box, RtfBuilder.Build(paragraphs, styles, box.Font, box.ForeColor, widthTwips));
+            // the column's width, not box.Width: a new box is rendered before LayoutRows gives it its real size
+            int widthTwips = (int)Math.Max(0, ((ColumnWidth - Scale(8)) / (float)Math.Max(1, DeviceDpi)) * 1440);
+            SetRtf(box, RtfBuilder.Build(paragraphs, styles, box.Font, box.ForeColor, widthTwips, box.RightToLeft == RightToLeft.Yes));
         }
 
         /// <summary>
@@ -377,7 +396,7 @@ namespace ParallelEdit.UI
             }
             box.Editing = false;
             box.BackColor = Theme.EditableBack;
-            string edited = box.Text;
+            string edited = EditedText(box);
             bool changed = edited != box.EditStartText;
             if (changed) CellCommitted?.Invoke(box, edited);
             else CellLeftUnchanged?.Invoke(box);
@@ -397,12 +416,18 @@ namespace ParallelEdit.UI
             if (MeasureRow(box.Row) != before) LayoutRows();
         }
 
+        /// <summary>
+        /// The edited raw text to save. A RichTextBox soft line break (Shift+Enter) is U+000B, and U+2028 can arrive
+        /// by paste; neither is valid USFM, so both become an ordinary line break.
+        /// </summary>
+        static string EditedText(CellBox box) => box.Text.Replace((char)0x0B, (char)0x0A).Replace((char)0x2028, (char)0x0A);
+
         /// <summary>Commits the focused cell (if any) so pending typing is not lost, e.g. before saving or navigating.</summary>
         public void CommitFocused()
         {
             var box = EditingCell ?? FocusedCell;
             if (box == null || !box.Info.Editable || !box.Editing || box.Text == box.EditStartText) return;
-            string edited = box.Text;
+            string edited = EditedText(box);
             box.EditStartText = edited;
             CellCommitted?.Invoke(box, edited);
         }
@@ -476,7 +501,7 @@ namespace ParallelEdit.UI
                         box.Bounds = bounds;
                         // growing a box taller does not itself scroll it back to the top, so a display-only
                         // cell that had scrolled while still small would otherwise show its later lines
-                        if (!box.Editing) { box.SelectionStart = 0; box.SelectionLength = 0; box.ScrollToCaret(); }
+                        if (!box.Editing && !box.Focused) { box.SelectionStart = 0; box.SelectionLength = 0; box.ScrollToCaret(); }
                     }
                 }
                 y += r.Height + 1;

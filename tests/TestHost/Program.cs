@@ -252,9 +252,9 @@ namespace TestHost
                             _ => Alignment.Left,
                         };
                         break;
-                    case "firstlineindent": if (float.TryParse(value, out float fli)) current.FirstLineIndent = fli; break;
-                    case "leftmargin": if (float.TryParse(value, out float lm)) current.LeftMargin = lm; break;
-                    case "rightmargin": if (float.TryParse(value, out float rm)) current.RightMargin = rm; break;
+                    case "firstlineindent": if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fli)) current.FirstLineIndent = fli; break;
+                    case "leftmargin": if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float lm)) current.LeftMargin = lm; break;
+                    case "rightmargin": if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float rm)) current.RightMargin = rm; break;
                 }
             }
         }

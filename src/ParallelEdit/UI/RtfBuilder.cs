@@ -13,7 +13,7 @@ namespace ParallelEdit.UI
     /// </summary>
     static class RtfBuilder
     {
-        public static string Build(IList<StyledParagraph> paragraphs, IReadOnlyDictionary<string, MarkerStyle> styles, Font baseFont, Color baseColor, int columnWidthTwips)
+        public static string Build(IList<StyledParagraph> paragraphs, IReadOnlyDictionary<string, MarkerStyle> styles, Font baseFont, Color baseColor, int columnWidthTwips, bool rightToLeft)
         {
             styles = styles ?? new Dictionary<string, MarkerStyle>();
             var colors = new List<Color> { baseColor, Theme.Muted };
@@ -32,7 +32,7 @@ namespace ParallelEdit.UI
                 var p = paragraphs[i];
                 MarkerStyle paraStyle = p.Marker != null && styles.TryGetValue(p.Marker, out var ps) ? ps : null;
                 body.Append(i == 0 ? @"\pard" : @"\par\pard");
-                body.Append(JustificationTag(paraStyle?.Justification));
+                body.Append(JustificationTag(paraStyle?.Justification, rightToLeft));
                 int li = InchesToTwips(paraStyle?.LeftMargin);
                 int fi = InchesToTwips(paraStyle?.FirstLineIndent);
                 int ri = InchesToTwips(paraStyle?.RightMargin);
@@ -110,26 +110,32 @@ namespace ParallelEdit.UI
             else sb.Append(@"\nosupersub");
         }
 
-        /// <summary>A minimal document showing plain text in one font/color, left-aligned, no indents.</summary>
-        public static string PlainDocument(string text, Font font, Color color)
+        /// <summary>A minimal document showing plain text in one font/color, aligned to the start side, no indents.</summary>
+        public static string PlainDocument(string text, Font font, Color color, bool rightToLeft)
         {
             var sb = new StringBuilder();
             sb.Append(@"{\rtf1\ansi\ansicpg1252\deff0\uc1{\fonttbl{\f0 ").Append(EscapePlain(font.Name)).Append(@";}}");
             sb.Append(@"{\colortbl ;\red").Append(color.R).Append(@"\green").Append(color.G).Append(@"\blue").Append(color.B).Append(";}");
-            sb.Append(@"\viewkind4\f0\fs").Append(Round(font.SizeInPoints * 2)).Append(@"\cf1\pard\ql\li0\fi0\ri0\b0\i0\ulnone\scaps0\nosupersub ");
+            sb.Append(@"\viewkind4\f0\fs").Append(Round(font.SizeInPoints * 2)).Append(@"\cf1\pard").Append(JustificationTag(null, rightToLeft))
+              .Append(@"\li0\fi0\ri0\b0\i0\ulnone\scaps0\nosupersub ");
             Escape(sb, text ?? "");
             sb.Append('}');
             return sb.ToString();
         }
 
-        static string JustificationTag(Alignment? a)
+        /// <summary>
+        /// Paragraph direction and alignment. For a right-to-left text the stylesheet's Left/Right are taken as
+        /// start/end (assumption: Paratext mirrors them the same way), so the default start side is the right.
+        /// </summary>
+        static string JustificationTag(Alignment? a, bool rightToLeft)
         {
+            string dir = rightToLeft ? @"\rtlpar" : @"\ltrpar";
             switch (a)
             {
-                case Alignment.Center: return @"\qc";
-                case Alignment.Right: return @"\qr";
-                case Alignment.Justify: return @"\qj";
-                default: return @"\ql";
+                case Alignment.Center: return dir + @"\qc";
+                case Alignment.Justify: return dir + @"\qj";
+                case Alignment.Right: return dir + (rightToLeft ? @"\ql" : @"\qr");
+                default: return dir + (rightToLeft ? @"\qr" : @"\ql");
             }
         }
 

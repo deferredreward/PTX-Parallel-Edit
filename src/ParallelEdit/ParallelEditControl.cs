@@ -166,7 +166,7 @@ namespace ParallelEdit
                 else if (key == "markers") s.Mode = value == "1" ? ViewMode.Unformatted : ViewMode.Clean; // legacy state
                 else if (key == "mode")
                 {
-                    if (Enum.TryParse(value, true, out ViewMode m)) s.Mode = m;
+                    if (Enum.TryParse(value, true, out ViewMode m) && Enum.IsDefined(typeof(ViewMode), m)) s.Mode = m; // "mode=7" also parses
                 }
                 else if (key == "ref")
                 {
