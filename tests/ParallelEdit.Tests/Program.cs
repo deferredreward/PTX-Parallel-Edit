@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using ParallelEdit.Core;
 
@@ -30,6 +31,11 @@ namespace ParallelEdit.Tests
             Run(nameof(CaretMapsFromCleanToRaw), CaretMapsFromCleanToRaw);
             Run(nameof(WholeVerseEditing), WholeVerseEditing);
             Run(nameof(SafetyChecksForSaving), SafetyChecksForSaving);
+            Run(nameof(StyledTextRoundTripsMark1), StyledTextRoundTripsMark1);
+            Run(nameof(StyledTextCharacterMarkerRuns), StyledTextCharacterMarkerRuns);
+            Run(nameof(StyledTextVerseMarkerOpensNoScope), StyledTextVerseMarkerOpensNoScope);
+            Run(nameof(StyledTextNoteInnerMarkersAreWholeMarkers), StyledTextNoteInnerMarkersAreWholeMarkers);
+            Run(nameof(StyledTextParagraphMarkerStartsNewParagraph), StyledTextParagraphMarkerStartsNewParagraph);
 
             if (args.Length > 0) RoundTripFolder(args[0]);
 
@@ -235,6 +241,97 @@ namespace ParallelEdit.Tests
             Eq(false, LoadedChapter.SameStructure(ChapterText.Parse(edited.ToUsfm()), edited), "heading moves on re-parse");
         }
 
+        /// <summary>
+        /// Concatenating every run's text of every paragraph must reproduce the input, minus only the
+        /// single newline dropped at each paragraph break (StyledText.Parse's documented contract).
+        /// </summary>
+        static bool IsParaOrHeadingMarker(string name) =>
+            "s s1 s2 s3 s4 ms ms1 ms2 ms3 mr r sr sp d cl qa sd sd1 sd2 sd3 sd4 p m po pr cls pmo pm pmc pmr pi pi1 pi2 pi3 pi4 mi nb pc ph ph1 ph2 ph3 b q q1 q2 q3 q4 qr qc qm qm1 qm2 qm3 qd lh li li1 li2 li3 li4 lf lim lim1 lim2 lim3 lim4"
+                .Split(' ').Contains(name);
+
+        /// <summary>The input, minus exactly the one newline dropped at each paragraph break.</summary>
+        static string WithoutParagraphBreaks(string usfm)
+        {
+            string s = usfm ?? "";
+            var starts = Regex.Matches(s, @"(?m)^\\([A-Za-z]+[0-9]*)(?![A-Za-z0-9*])")
+                .Cast<Match>().Where(m => IsParaOrHeadingMarker(m.Groups[1].Value)).ToList();
+            for (int i = starts.Count - 1; i >= 0; i--)
+            {
+                int idx = starts[i].Index;
+                if (idx >= 2 && s[idx - 2] == '\r' && s[idx - 1] == '\n') s = s.Substring(0, idx - 2) + s.Substring(idx);
+                else if (idx >= 1 && s[idx - 1] == '\n') s = s.Substring(0, idx - 1) + s.Substring(idx);
+            }
+            return s;
+        }
+
+        static string StyledTextConcat(string usfm, string initialMarker)
+        {
+            var paragraphs = StyledText.Parse(usfm, initialMarker);
+            var sb = new StringBuilder();
+            foreach (var p in paragraphs) foreach (var run in p.Runs) sb.Append(run.Text);
+            return sb.ToString();
+        }
+
+        static void AssertStyledTextRoundTrips(string usfm, string initialMarker, string what) =>
+            Eq(WithoutParagraphBreaks(usfm), StyledTextConcat(usfm, initialMarker), what);
+
+        static void StyledTextRoundTripsMark1()
+        {
+            var t = ChapterText.Parse(Mark1);
+            foreach (var seg in t.Segments)
+            {
+                AssertStyledTextRoundTrips(seg.Lead, null, "lead " + seg.Label);
+                AssertStyledTextRoundTrips(seg.Body, null, "body " + seg.Label);
+                AssertStyledTextRoundTrips(seg.Get(SegmentPart.Whole), null, "whole " + seg.Label);
+            }
+        }
+
+        static void StyledTextNoteInnerMarkersAreWholeMarkers()
+        {
+            var runs = StyledText.Parse("a,\\f + \\fr 1:2 \\ft note.\\f* b", "p")[0].Runs;
+            var markers = runs.Where(r => r.IsMarker).Select(r => r.Text).ToList();
+            Eq("\\f + |\\fr |\\ft |\\f*", string.Join("|", markers), "note markers");
+            Eq("fr", runs.First(r => r.Text == "1:2 ").CharMarker, "\\fr text");
+            Eq("ft", runs.First(r => r.Text == "note.").CharMarker, "\\ft text");
+            Eq(null, runs.Last().CharMarker, "text after the note");
+        }
+
+        static void StyledTextVerseMarkerOpensNoScope()
+        {
+            var runs = StyledText.Parse("\\v 8 Then Naomi", "p")[0].Runs;
+            Eq(2, runs.Count, "run count");
+            Eq("\\v 8 ", runs[0].Text, "verse marker is one marker run");
+            Eq(true, runs[0].IsMarker, "verse marker is a marker");
+            Eq("Then Naomi", runs[1].Text, "verse text");
+            Eq(null, runs[1].CharMarker, "verse text is not styled as \\v");
+        }
+
+        static void StyledTextCharacterMarkerRuns()
+        {
+            var paragraphs = StyledText.Parse("\\add x\\add*", "p");
+            Eq(1, paragraphs.Count, "one paragraph");
+            var runs = paragraphs[0].Runs;
+            Eq(3, runs.Count, "run count");
+            Eq(true, runs[0].IsMarker, "marker 1");
+            Eq("\\add ", runs[0].Text, "marker 1 text");
+            Eq(false, runs[1].IsMarker, "text run");
+            Eq("x", runs[1].Text, "text run text");
+            Eq("add", runs[1].CharMarker, "text run char marker");
+            Eq(true, runs[2].IsMarker, "marker 2");
+            Eq("\\add*", runs[2].Text, "marker 2 text");
+        }
+
+        static void StyledTextParagraphMarkerStartsNewParagraph()
+        {
+            var paragraphs = StyledText.Parse("Body text.\n\\q1 Continued.", "p");
+            Eq(2, paragraphs.Count, "two paragraphs");
+            Eq("p", paragraphs[0].Marker, "first paragraph marker");
+            Eq("Body text.", string.Concat(paragraphs[0].Runs.Select(r => r.Text)), "first paragraph text");
+            Eq("q1", paragraphs[1].Marker, "second paragraph marker");
+            Eq(true, paragraphs[1].Runs[0].IsMarker, "q1 token is a marker run");
+            Eq("\\q1 ", paragraphs[1].Runs[0].Text, "q1 token text");
+        }
+
         static void NoVersesMeansPrefixOnly()
         {
             var t = ChapterText.Parse("\\id GEN\n\\c 1\n");
@@ -273,6 +370,16 @@ namespace ParallelEdit.Tests
                         Console.WriteLine("FAIL round trip " + file);
                         break;
                     }
+                    foreach (var seg in t.Segments)
+                    {
+                        string whole = seg.Get(SegmentPart.Whole);
+                        if (StyledTextConcat(whole, null) != WithoutParagraphBreaks(whole))
+                        {
+                            failures++;
+                            Console.WriteLine("FAIL StyledText round trip " + file + " verse " + seg.Label);
+                            break;
+                        }
+                    }
                 }
             }
             Console.WriteLine($"Round trip: {files} files, {chapters} chapters, {verses} verses, {badLabels} unparsed verse labels");
@@ -290,6 +397,7 @@ namespace ParallelEdit.Tests
         public string FontFamily => "Segoe UI";
         public float FontSize => 10;
         public bool RightToLeft => false;
+        public IReadOnlyDictionary<string, MarkerStyle> MarkerStyles { get; } = new Dictionary<string, MarkerStyle>();
         public string GetChapterUsfm(int book, int chapter) => chapter == 1 ? usfm : "";
         public bool CanEdit(int book, int chapter) => true;
         public string WriteChapter(int book, int chapter, Func<string, string> transform) => "not supported";

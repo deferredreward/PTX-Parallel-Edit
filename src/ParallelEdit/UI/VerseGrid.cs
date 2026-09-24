@@ -18,7 +18,8 @@ namespace ParallelEdit.UI
 
     /// <summary>
     /// Scrolling grid: one row per verse (plus thin rows for section headings), one column per text.
-    /// Each cell is a borderless TextBox; the grid paints the cell backgrounds and 1px grid lines.
+    /// Each cell is a borderless RichTextBox (so Standard mode can style runs); the grid paints the
+    /// cell backgrounds and 1px grid lines.
     /// </summary>
     public class VerseGrid : Panel
     {
@@ -30,8 +31,8 @@ namespace ParallelEdit.UI
             public int Top, Height;
         }
 
-        /// <summary>A cell's text box. Knows its row/column and forwards the mouse wheel to the grid.</summary>
-        public class CellBox : TextBox
+        /// <summary>A cell's rich text box. Knows its row/column and forwards the mouse wheel to the grid.</summary>
+        public class CellBox : RichTextBox
         {
             public RowView Row;
             public int Column;
@@ -43,10 +44,72 @@ namespace ParallelEdit.UI
             /// <summary>True while the cell shows raw USFM for editing; only then may its text be saved.</summary>
             public bool Editing;
             internal VerseGrid Grid;
+            /// <summary>The content height last reported by the native control (EN_REQUESTRESIZE), or -1 if none yet.</summary>
+            internal int ContentHeight = -1;
+
+            [DllImport("user32.dll")]
+            static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+            const int WM_USER = 0x400;
+            const int EM_GETEVENTMASK = WM_USER + 59;
+            const int EM_SETEVENTMASK = WM_USER + 69;
+            const int EM_REQUESTRESIZE = WM_USER + 65;
+            const int ENM_REQUESTRESIZE = 0x40000;
+            const int WM_MOUSEWHEEL = 0x020A;
+
+            public CellBox()
+            {
+                DetectUrls = false;
+                BorderStyle = BorderStyle.None;
+                ScrollBars = RichTextBoxScrollBars.None;
+                Multiline = true;
+                WordWrap = true;
+                ContentsResized += (s, e) => ContentHeight = e.NewRectangle.Height;
+            }
+
+            protected override void OnHandleCreated(EventArgs e)
+            {
+                base.OnHandleCreated(e);
+                // the native control only sends EN_REQUESTRESIZE once this bit is set
+                IntPtr mask = SendMessage(Handle, EM_GETEVENTMASK, IntPtr.Zero, IntPtr.Zero);
+                SendMessage(Handle, EM_SETEVENTMASK, IntPtr.Zero, (IntPtr)((long)mask | ENM_REQUESTRESIZE));
+            }
+
+            /// <summary>Asks the native control to report its current content height, synchronously.</summary>
+            public int MeasureContentHeight()
+            {
+                if (IsHandleCreated) SendMessage(Handle, EM_REQUESTRESIZE, IntPtr.Zero, IntPtr.Zero);
+                return ContentHeight;
+            }
+
+            protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+            {
+                if (!ReadOnly && (keyData == (Keys.Shift | Keys.Insert) || keyData == (Keys.Control | Keys.V)))
+                {
+                    PastePlain();
+                    return true;
+                }
+                return base.ProcessCmdKey(ref msg, keyData);
+            }
+
+            /// <summary>Pastes only the clipboard's plain text, so formatting or embedded objects never reach the USFM.</summary>
+            void PastePlain()
+            {
+                if (JustRevealed) Grid?.Reveal(this, SelectionStart); // mouse still down on a new cell: show the raw text first
+                try
+                {
+                    if (Clipboard.ContainsText()) SelectedText = Clipboard.GetText(TextDataFormat.UnicodeText);
+                }
+                catch (System.Runtime.InteropServices.ExternalException) { /* another program holds the clipboard */ }
+            }
 
             protected override void WndProc(ref Message m)
             {
-                const int WM_MOUSEWHEEL = 0x020A;
+                const int WM_PASTE = 0x0302;
+                if (m.Msg == WM_PASTE)
+                {
+                    if (!ReadOnly) PastePlain();
+                    return;
+                }
                 if (m.Msg == WM_MOUSEWHEEL && Grid != null)
                 {
                     Grid.ScrollByWheel((short)((long)m.WParam >> 16));
@@ -56,17 +119,15 @@ namespace ParallelEdit.UI
             }
         }
 
-        [DllImport("user32.dll")]
-        static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
-        const int EM_GETLINECOUNT = 0xBA;
-
         readonly List<RowView> rows = new List<RowView>();
         TextColumnStyle[] columns = new TextColumnStyle[0];
         readonly Font labelFont = new Font("Segoe UI", 8.25f);
         readonly Font labelFontBold = new Font("Segoe UI", 8.25f, FontStyle.Bold);
         int currentVerse = -1;
-        bool showMarkers;
+        ViewMode mode = ViewMode.Clean;
         bool suppressEvents;
+
+        static readonly IReadOnlyDictionary<string, MarkerStyle> NoStyles = new Dictionary<string, MarkerStyle>();
 
         public event Action<CellBox> CellEntered;
         /// <summary>Raised when an editable cell loses focus with changed text.</summary>
@@ -117,14 +178,14 @@ namespace ParallelEdit.UI
         public int ColumnLeft(int col) => LabelWidth + 1 + col * (ColumnWidth + 1);
         public int ColumnWidth => columns.Length == 0 ? 0 : Math.Max(40, (ContentWidth - LabelWidth - 1 - columns.Length) / columns.Length);
 
-        public bool ShowMarkers
+        public ViewMode Mode
         {
-            get => showMarkers;
+            get => mode;
             set
             {
-                if (showMarkers == value) return;
-                showMarkers = value;
-                foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused && !c.Editing) c.Text = DisplayText(c, false);
+                if (mode == value) return;
+                mode = value;
+                foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused && !c.Editing) ShowDisplay(c);
                 LayoutRows();
             }
         }
@@ -166,8 +227,6 @@ namespace ParallelEdit.UI
                         var box = new CellBox
                         {
                             Row = rv, Column = col, Info = cell, Grid = this,
-                            Multiline = true, WordWrap = true, BorderStyle = BorderStyle.None,
-                            ScrollBars = ScrollBars.None, AcceptsReturn = true,
                             ReadOnly = !cell.Editable,
                             Font = info.IsHeading ? style.HeadingFont : style.Font,
                             RightToLeft = style.RightToLeft ? RightToLeft.Yes : RightToLeft.No,
@@ -175,7 +234,7 @@ namespace ParallelEdit.UI
                             ForeColor = cell.Kind == CellKind.Continued ? Theme.Muted : info.IsHeading ? Theme.Heading : Theme.Text,
                             TabStop = cell.Kind == CellKind.Text,
                         };
-                        box.Text = DisplayText(box, false);
+                        ShowDisplay(box);
                         box.Enter += Box_Enter;
                         box.Leave += Box_Leave;
                         box.TextChanged += Box_TextChanged;
@@ -199,20 +258,72 @@ namespace ParallelEdit.UI
             HighlightVerse(currentVerse);
         }
 
-        string DisplayText(CellBox box, bool focused)
+        static string RawDisplayText(CellInfo info) => (info.RawText ?? "").Replace("\r\n", "\n");
+
+        /// <summary>Sets a box's text with no per-character formatting: the box's own font/color, left-aligned, no indents.</summary>
+        static void SetPlainText(CellBox box, string text) =>
+            SetRtf(box, RtfBuilder.PlainDocument(text ?? "", box.Font, box.ForeColor, box.RightToLeft == RightToLeft.Yes));
+
+        /// <summary>
+        /// Assigns Rtf and resets the caret/scroll to the top. Without this, a box that is still its
+        /// old (smaller) height when the content is set auto-scrolls to keep the caret in view, hiding
+        /// the first lines until the row is measured and resized.
+        /// </summary>
+        static void SetRtf(CellBox box, string rtf)
+        {
+            box.Rtf = rtf;
+            box.SelectionStart = 0;
+            box.SelectionLength = 0;
+            box.ScrollToCaret();
+        }
+
+        /// <summary>Shows a cell's content for its current view mode (never called while a cell is being edited).</summary>
+        void ShowDisplay(CellBox box)
         {
             var info = box.Info;
-            if (info.Kind == CellKind.Empty) return "";
-            if (info.Kind == CellKind.Continued) return info.CleanText;
-            if (showMarkers || (focused && info.Editable)) return info.RawText.Replace("\r\n", "\n").Replace("\n", "\r\n");
-            return info.CleanText.Replace("\n", "\r\n");
+            if (info.Kind == CellKind.Empty) { SetPlainText(box, ""); return; }
+            if (info.Kind == CellKind.Continued) { SetPlainText(box, info.CleanText); return; }
+            switch (mode)
+            {
+                case ViewMode.Unformatted:
+                    SetPlainText(box, RawDisplayText(info));
+                    break;
+                case ViewMode.Standard:
+                    ShowStandard(box);
+                    break;
+                default:
+                    SetPlainText(box, info.CleanText);
+                    break;
+            }
+        }
+
+        void ShowStandard(CellBox box)
+        {
+            var info = box.Info;
+            // like Unformatted, the verse cell holds the verse's whole USFM, headings and paragraph markers included
+            // trailing whitespace trimmed as in the other modes (RawText), so the verse's final line break adds no blank line
+            var paragraphs = StyledText.Parse(info.RawText, null);
+            var styles = info.Chapter?.Source?.MarkerStyles ?? NoStyles;
+            // the column's width, not box.Width: a new box is rendered before LayoutRows gives it its real size
+            int widthTwips = (int)Math.Max(0, ((ColumnWidth - Scale(8)) / (float)Math.Max(1, DeviceDpi)) * 1440);
+            SetRtf(box, RtfBuilder.Build(paragraphs, styles, box.Font, box.ForeColor, widthTwips, box.RightToLeft == RightToLeft.Yes));
+        }
+
+        /// <summary>
+        /// The start of a verse cell's raw USFM that the cell does not show: only Clean mode hides anything
+        /// (the headings, paragraph markers and "\v N " before the verse text).
+        /// </summary>
+        string HiddenPrefix(CellInfo info)
+        {
+            var seg = info.Segment;
+            return mode == ViewMode.Clean && info.Part == SegmentPart.Whole && seg != null ? seg.Lead + seg.VerseMarker : "";
         }
 
         /// <summary>Refreshes the shown text of every cell from the model (e.g. after a save changed the chapter).</summary>
         public void RefreshTexts()
         {
             suppressEvents = true;
-            foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused && !c.Editing) c.Text = DisplayText(c, false);
+            foreach (var r in rows) foreach (var c in r.Cells) if (!c.Focused && !c.Editing) ShowDisplay(c);
             suppressEvents = false;
             LayoutRows();
         }
@@ -233,34 +344,26 @@ namespace ParallelEdit.UI
             CellEntered?.Invoke(box);
         }
 
-        /// <summary>Shows the raw USFM for editing, putting the caret where it was in the clean text.</summary>
-        void Reveal(CellBox box, int cleanCaret)
+        /// <summary>Shows the raw USFM for editing, putting the caret where it was in the displayed text.</summary>
+        void Reveal(CellBox box, int caretInShown)
         {
             box.JustRevealed = false;
             string shown = box.Text;
-            string raw = DisplayText(box, true);
+            string raw = RawDisplayText(box.Info);
             suppressEvents = true;
-            if (shown != raw)
-            {
-                string rawN = raw.Replace("\r\n", "\n");
-                int cleanN = cleanCaret - shown.Substring(0, Math.Min(cleanCaret, shown.Length)).Split('\r').Length + 1;
-                string cleanShown = shown.Replace("\r\n", "\n");
-                int caret;
-                // A verse cell's clean text is only the verse text; its raw text starts with the heading/paragraph
-                // markers and "\v N ". Map inside the verse text, then add that prefix.
-                string prefix = box.Info.Part == SegmentPart.Whole && box.Info.Segment != null
-                    ? (box.Info.Segment.Lead + box.Info.Segment.VerseMarker).Replace("\r\n", "\n") : "";
-                if (prefix.Length > 0 && rawN.StartsWith(prefix))
-                    caret = prefix.Length + ChapterText.MapCleanToRaw(cleanShown, cleanN, rawN.Substring(prefix.Length));
-                else
-                    caret = ChapterText.MapCleanToRaw(cleanShown, cleanN, rawN);
-                // the box uses CRLF line breaks; add one position per line break before the caret
-                int lines = rawN.Substring(0, caret).Split('\n').Length - 1;
-                box.Text = raw;
-                box.SelectionStart = Math.Min(raw.Length, caret + lines);
-            }
-            else box.SelectionStart = Math.Min(shown.Length, cleanCaret);
+
+            string prefix = HiddenPrefix(box.Info).Replace("\r\n", "\n");
+            bool hasPrefix = prefix.Length > 0 && raw.StartsWith(prefix);
+            string rawSuffix = hasPrefix ? raw.Substring(prefix.Length) : raw;
+            // Standard and Unformatted show the rest of the raw text character for character (Standard only adds
+            // trailing whitespace), so the caret index carries over; only Clean strips markers and needs the letter-counting map.
+            int caretInSuffix = mode != ViewMode.Clean ? Math.Min(caretInShown, rawSuffix.Length) : ChapterText.MapCleanToRaw(shown, caretInShown, rawSuffix);
+            int caret = (hasPrefix ? prefix.Length : 0) + caretInSuffix;
+
+            SetPlainText(box, raw);
+            box.SelectionStart = Math.Min(raw.Length, caret);
             box.SelectionLength = 0;
+            box.ScrollToCaret();
             suppressEvents = false;
             box.EditStartText = box.Text;
             box.Editing = true;
@@ -286,7 +389,7 @@ namespace ParallelEdit.UI
             if (!box.Info.Editable) return;
             if (!box.Editing)
             {
-                // focus left before the raw text was ever shown: nothing was edited, and the clean
+                // focus left before the raw text was ever shown: nothing was edited, and the shown
                 // text in the box must never be saved as USFM
                 box.JustRevealed = false;
                 box.BackColor = Theme.EditableBack;
@@ -294,13 +397,13 @@ namespace ParallelEdit.UI
             }
             box.Editing = false;
             box.BackColor = Theme.EditableBack;
-            string edited = box.Text;
+            string edited = EditedText(box);
             bool changed = edited != box.EditStartText;
             if (changed) CellCommitted?.Invoke(box, edited);
             else CellLeftUnchanged?.Invoke(box);
             if (box.IsDisposed) return; // a commit may have rebuilt the grid
             suppressEvents = true;
-            box.Text = DisplayText(box, false);
+            ShowDisplay(box);
             suppressEvents = false;
             LayoutRows();
         }
@@ -314,12 +417,18 @@ namespace ParallelEdit.UI
             if (MeasureRow(box.Row) != before) LayoutRows();
         }
 
+        /// <summary>
+        /// The edited raw text to save. A RichTextBox soft line break (Shift+Enter) is U+000B, and U+2028 can arrive
+        /// by paste; neither is valid USFM, so both become an ordinary line break.
+        /// </summary>
+        static string EditedText(CellBox box) => box.Text.Replace((char)0x0B, (char)0x0A).Replace((char)0x2028, (char)0x0A);
+
         /// <summary>Commits the focused cell (if any) so pending typing is not lost, e.g. before saving or navigating.</summary>
         public void CommitFocused()
         {
             var box = EditingCell ?? FocusedCell;
             if (box == null || !box.Info.Editable || !box.Editing || box.Text == box.EditStartText) return;
-            string edited = box.Text;
+            string edited = EditedText(box);
             box.EditStartText = edited;
             CellCommitted?.Invoke(box, edited);
         }
@@ -346,13 +455,12 @@ namespace ParallelEdit.UI
             int h = 0;
             foreach (var c in r.Cells)
             {
-                int lines;
                 if (c.IsHandleCreated)
                 {
                     if (c.Width != w) c.Width = w;
-                    lines = (int)SendMessage(c.Handle, EM_GETLINECOUNT, IntPtr.Zero, IntPtr.Zero);
-                    if (c.TextLength == 0) lines = 1;
-                    h = Math.Max(h, lines * c.Font.Height);
+                    int contentHeight = c.MeasureContentHeight();
+                    if (contentHeight <= 0) contentHeight = c.Font.Height;
+                    h = Math.Max(h, contentHeight);
                 }
                 else
                 {
@@ -374,8 +482,8 @@ namespace ParallelEdit.UI
             int scrollY = AutoScrollPosition.Y;
             foreach (var r in rows)
             {
-                // with markers shown, headings appear inside the verse cells, so heading rows are hidden
-                bool visible = !(r.Info.IsHeading && showMarkers);
+                // outside Clean mode, headings appear inside the verse cells, so heading rows are hidden
+                bool visible = !(r.Info.IsHeading && mode != ViewMode.Clean);
                 if (r.Label.Visible != visible)
                 {
                     r.Label.Visible = visible;
@@ -389,7 +497,13 @@ namespace ParallelEdit.UI
                 {
                     var box = r.Cells[col];
                     var bounds = new Rectangle(ColumnLeft(col) + Scale(4), y + scrollY + Scale(3), colW - Scale(8), r.Height - Scale(6));
-                    if (box.Bounds != bounds) box.Bounds = bounds;
+                    if (box.Bounds != bounds)
+                    {
+                        box.Bounds = bounds;
+                        // growing a box taller does not itself scroll it back to the top, so a display-only
+                        // cell that had scrolled while still small would otherwise show its later lines
+                        if (!box.Editing && !box.Focused) { box.SelectionStart = 0; box.SelectionLength = 0; box.ScrollToCaret(); }
+                    }
                 }
                 y += r.Height + 1;
             }

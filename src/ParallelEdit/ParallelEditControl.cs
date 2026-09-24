@@ -58,7 +58,7 @@ namespace ParallelEdit
             var windowProject = parent.CurrentState?.Project;
             if (texts.Count == 0 && windowProject != null) texts.Add(Wrap(windowProject));
             promptForTexts = state == null;
-            view.ShowMarkers = saved.ShowMarkers;
+            view.Mode = saved.Mode;
             view.SetTexts(texts);
 
             var start = parent.CurrentState?.VerseRef;
@@ -79,7 +79,7 @@ namespace ParallelEdit
         }
 
         public override string GetState() =>
-            new PluginState { TextIds = view.Texts.Select(t => t.Id).ToList(), Reference = view.Current, ShowMarkers = view.ShowMarkers }.ToString();
+            new PluginState { TextIds = view.Texts.Select(t => t.Id).ToList(), Reference = view.Current, Mode = view.Mode }.ToString();
 
         public override void DoLoad(IProgressInfo progressInfo)
         {
@@ -141,17 +141,17 @@ namespace ParallelEdit
         }
     }
 
-    /// <summary>What the window remembers between Paratext sessions: "texts=ID1,ID2;ref=41.1.1;markers=0".</summary>
+    /// <summary>What the window remembers between Paratext sessions: "texts=ID1,ID2;ref=41.1.1;mode=clean".</summary>
     public class PluginState
     {
         public List<string> TextIds = new List<string>();
         public VerseRef? Reference;
-        public bool ShowMarkers;
+        public ViewMode Mode;
 
         public override string ToString() =>
             "texts=" + string.Join(",", TextIds) +
             (Reference.HasValue ? $";ref={Reference.Value.Book}.{Reference.Value.Chapter}.{Reference.Value.Verse}" : "") +
-            ";markers=" + (ShowMarkers ? "1" : "0");
+            ";mode=" + Mode.ToString().ToLowerInvariant();
 
         public static PluginState Parse(string state)
         {
@@ -163,7 +163,11 @@ namespace ParallelEdit
                 if (eq < 0) continue;
                 string key = part.Substring(0, eq), value = part.Substring(eq + 1);
                 if (key == "texts") s.TextIds = value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).ToList();
-                else if (key == "markers") s.ShowMarkers = value == "1";
+                else if (key == "markers") s.Mode = value == "1" ? ViewMode.Unformatted : ViewMode.Clean; // legacy state
+                else if (key == "mode")
+                {
+                    if (Enum.TryParse(value, true, out ViewMode m) && Enum.IsDefined(typeof(ViewMode), m)) s.Mode = m; // "mode=7" also parses
+                }
                 else if (key == "ref")
                 {
                     var n = value.Split('.');

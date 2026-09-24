@@ -8,9 +8,18 @@ the texts you are allowed to edit, right in that grid.
   sets the verse numbering (versification); the others are mapped onto it, so
   a Hebrew-numbered resource still lines up with an English-numbered project.
 - **Read**: each row is one verse. Section headings get their own thin row
-  above the verse they introduce. Footnotes, cross references and markers are
-  hidden so the text reads cleanly. Turn on `Markers` to see raw USFM
-  everywhere.
+  above the verse they introduce. The view mode dropdown picks how text is
+  shown:
+  - **Clean** (default): plain text, footnotes/cross references/markers
+    hidden, so the text reads cleanly.
+  - **Standard**: text styled like Paratext's Standard view (font size, bold,
+    italic, color, indents, etc. from the project's stylesheet), with every
+    USFM marker shown in small grey text and notes shown inline. Headings
+    appear inside the verse cells, as in Unformatted.
+  - **Unformatted**: raw USFM in every cell; heading rows are hidden because
+    headings then appear inside the verse cells.
+  Whatever the mode, clicking into an editable cell always shows that verse's
+  raw USFM as plain text for editing.
 - **Edit**: white cells are editable, grey cells are read-only (resources, or
   projects/books where you lack edit permission). Click into a white cell and
   it shows that verse's raw USFM, so footnotes and poetry markers are kept.
@@ -54,12 +63,19 @@ Uninstall: `pwsh -File install.ps1 -Uninstall`.
 
 ## Development
 
-- `src/ParallelEdit` — the plugin. `Core/` has the USFM verse splitting and
-  merge logic (no Paratext or UI types); `UI/` has the grid; the files at the
-  top connect it to Paratext.
+- `src/ParallelEdit` — the plugin. `Core/` has the USFM verse splitting, merge
+  and tokenizing logic (no Paratext or UI types) — including `StyledText`,
+  which turns USFM into paragraphs/runs for Standard mode, and `MarkerStyle`,
+  the stylesheet-derived look for one marker; `UI/` has the grid and
+  `RtfBuilder` (turns `StyledText` + marker styles into the RTF a cell shows);
+  the files at the top connect it to Paratext, including
+  `ParatextTextSource.MarkerStyles` (from `Project.ScriptureMarkerInformation`).
 - `tests/ParallelEdit.Tests` — console tests:
   `dotnet run --project tests/ParallelEdit.Tests -- "C:\My Paratext 9 Projects"`
   also checks that every chapter of every local project splits and rebuilds
-  byte-for-byte.
+  byte-for-byte, and that `StyledText` round-trips every verse.
 - `tests/TestHost` — runs the same view outside Paratext on project folders.
-  Use copies of the folders; `--edit` really writes to them.
+  Use copies of the folders; `--edit` really writes to them. `--mode
+  clean|standard|unformatted` picks the view mode (`--markers` is a legacy
+  alias for `--mode unformatted`). Standard mode reads `usfm.sty` from the
+  projects folder and `custom.sty` from the project folder, if present.

@@ -5,6 +5,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 using System.Threading;
 using System.Windows.Forms;
 using ParallelEdit.Core;
@@ -19,14 +20,19 @@ namespace TestHost
     /// </summary>
     static class Program
     {
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern bool SetProcessDPIAware();
+
         [STAThread]
         static int Main(string[] args)
         {
+            SetProcessDPIAware(); // so Snap's screen capture and the form use the same (physical) pixels
             Application.EnableVisualStyles();
             var folders = new List<string>();
             var readOnly = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             string shot = null, reference = "MRK 1:1";
-            bool edit = false, markers = false;
+            bool edit = false;
+            var mode = ViewMode.Clean;
             for (int i = 0; i < args.Length; i++)
             {
                 switch (args[i])
@@ -34,7 +40,10 @@ namespace TestHost
                     case "--shot": shot = args[++i]; break;
                     case "--ref": reference = args[++i]; break;
                     case "--edit": edit = true; break;
-                    case "--markers": markers = true; break;
+                    case "--markers": mode = ViewMode.Unformatted; break; // alias for --mode unformatted
+                    case "--mode":
+                        if (!Enum.TryParse(args[++i], true, out mode) || !Enum.IsDefined(typeof(ViewMode), mode)) throw new ArgumentException("--mode must be clean, standard or unformatted");
+                        break;
                     case "--readonly": readOnly.Add(args[++i]); break;
                     default: folders.Add(args[i]); break;
                 }
@@ -45,9 +54,12 @@ namespace TestHost
             var view = new ParallelView { Dock = DockStyle.Fill, AvailableTexts = () => sources };
             form.Controls.Add(view);
             view.SetTexts(sources);
-            view.ShowMarkers = markers;
+            view.Mode = mode;
             Books.TryParse(reference, out var r);
+            var sw = Stopwatch.StartNew();
             view.GoTo(r);
+            sw.Stop();
+            Console.WriteLine($"SetRows ({mode}): {sw.ElapsedMilliseconds} ms");
 
             int exit = 0;
             if (shot != null || edit)
@@ -75,14 +87,17 @@ namespace TestHost
 
         static void Snap(Form form, string path)
         {
+            // Form.DrawToBitmap does not render RichTextBox content, so capture the real screen area instead.
             form.TopMost = true;
             form.Activate();
             Application.DoEvents();
             Thread.Sleep(300);
             Application.DoEvents();
-            using (var bmp = new Bitmap(form.Width, form.Height))
+            var bounds = form.Bounds;
+            using (var bmp = new Bitmap(bounds.Width, bounds.Height))
             {
-                form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.Size));
+                using (var g = Graphics.FromImage(bmp))
+                    g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
                 bmp.Save(path, ImageFormat.Png);
             }
             Console.WriteLine("Saved screenshot " + path);
@@ -164,6 +179,85 @@ namespace TestHost
         public string FontFamily { get; }
         public float FontSize { get; }
         public bool RightToLeft => false;
+
+        IReadOnlyDictionary<string, MarkerStyle> markerStyles;
+        public IReadOnlyDictionary<string, MarkerStyle> MarkerStyles => markerStyles ?? (markerStyles = LoadMarkerStyles());
+
+        Dictionary<string, MarkerStyle> LoadMarkerStyles()
+        {
+            var styles = new Dictionary<string, MarkerStyle>();
+            try
+            {
+                string root = Path.GetDirectoryName(folder.TrimEnd('\\', '/'));
+                string baseSty = root != null ? Path.Combine(root, "usfm.sty") : null;
+                if (baseSty != null && File.Exists(baseSty)) ParseStylesheet(File.ReadAllText(baseSty), styles);
+                string customSty = Path.Combine(folder, "custom.sty");
+                if (File.Exists(customSty)) ParseStylesheet(File.ReadAllText(customSty), styles);
+            }
+            catch (Exception) { /* fall back to no styling */ }
+            return styles;
+        }
+
+        static readonly Regex TrailingCommentRx = new Regex(@"\s+#.*$");
+
+        static void ParseStylesheet(string text, Dictionary<string, MarkerStyle> styles)
+        {
+            MarkerStyle current = null;
+            foreach (var rawLine in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = rawLine.TrimEnd();
+                if (line.Length == 0 || line[0] == '#' || line[0] != '\\') continue;
+                int sp = line.IndexOfAny(new[] { ' ', '\t' });
+                string key = sp < 0 ? line.Substring(1) : line.Substring(1, sp - 1);
+                string value = sp < 0 ? "" : TrailingCommentRx.Replace(line.Substring(sp + 1), "").Trim();
+
+                if (string.Equals(key, "Marker", StringComparison.OrdinalIgnoreCase))
+                {
+                    current = new MarkerStyle { Marker = value };
+                    styles[value] = current;
+                    continue;
+                }
+                if (current == null) continue;
+                switch (key.ToLowerInvariant())
+                {
+                    case "styletype":
+                        current.Kind = value.ToLowerInvariant() switch
+                        {
+                            "paragraph" => MarkerKind.Paragraph,
+                            "character" => MarkerKind.Character,
+                            "note" => MarkerKind.Note,
+                            _ => MarkerKind.Other,
+                        };
+                        break;
+                    case "fontsize": if (int.TryParse(value, out int fs)) current.FontSize = fs; break;
+                    case "bold": current.Bold = true; break;
+                    case "italic": current.Italic = true; break;
+                    case "superscript": current.Superscript = true; break;
+                    case "subscript": current.Subscript = true; break;
+                    case "underline": current.Underline = true; break;
+                    case "smallcaps": current.SmallCaps = true; break;
+                    case "color":
+                        if (int.TryParse(value, out int bgr))
+                        {
+                            int r = bgr & 0xFF, g = (bgr >> 8) & 0xFF, b = (bgr >> 16) & 0xFF;
+                            current.ColorArgb = unchecked((int)0xFF000000 | (r << 16) | (g << 8) | b);
+                        }
+                        break;
+                    case "justification":
+                        current.Justification = value.ToLowerInvariant() switch
+                        {
+                            "center" => Alignment.Center,
+                            "right" => Alignment.Right,
+                            "both" => Alignment.Justify,
+                            _ => Alignment.Left,
+                        };
+                        break;
+                    case "firstlineindent": if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fli)) current.FirstLineIndent = fli; break;
+                    case "leftmargin": if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float lm)) current.LeftMargin = lm; break;
+                    case "rightmargin": if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float rm)) current.RightMargin = rm; break;
+                }
+            }
+        }
 
         public string FileFor(int book) =>
             Directory.EnumerateFiles(folder, "*.SFM").FirstOrDefault(f => Path.GetFileName(f).Substring(2).StartsWith(Books.Code(book), StringComparison.OrdinalIgnoreCase));
