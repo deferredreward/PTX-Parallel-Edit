@@ -8,7 +8,7 @@
     <RootNamespace>ParallelEdit</RootNamespace>
     <AssemblyName>ParallelEdit</AssemblyName>
     <Version>1.0.0</Version>
-    <Company>unfoldingWord</Company>
+    <Company>Benjamin Wright, Wycliffe Bible Translators</Company>
     <Product>Parallel Edit</Product>
     <Description>Paratext 9 plugin: verse-by-verse parallel view and editing of several texts.</Description>
     <PlatformTarget>AnyCPU</PlatformTarget>
