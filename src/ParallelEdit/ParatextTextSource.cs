@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Paratext.PluginInterfaces;
 using ParallelEdit.Core;
@@ -11,6 +12,7 @@ namespace ParallelEdit
         public readonly IProject Project;
         readonly IPluginObject owner;
         Action<int, int> scriptureChanged;
+        IReadOnlyDictionary<string, MarkerStyle> markerStyles;
 
         public ParatextTextSource(IProject project, IPluginObject owner)
         {
@@ -26,6 +28,70 @@ namespace ParallelEdit
         public string FontFamily => Safe(() => Project.Language?.Font?.FontFamily, null);
         public float FontSize => Safe(() => Project.Language?.Font?.Size ?? 0f, 0f);
         public bool RightToLeft => Safe(() => Project.Language?.IsRtoL ?? false, false);
+
+        public IReadOnlyDictionary<string, MarkerStyle> MarkerStyles => markerStyles ?? (markerStyles = BuildMarkerStyles());
+
+        Dictionary<string, MarkerStyle> BuildMarkerStyles()
+        {
+            var result = new Dictionary<string, MarkerStyle>();
+            try
+            {
+                foreach (var info in Project.ScriptureMarkerInformation)
+                {
+                    var style = new MarkerStyle { Marker = info.Marker };
+                    if (info is IParagraphMarkerInfo para)
+                    {
+                        style.Kind = MarkerKind.Paragraph;
+                        style.Justification = ToAlignment(para.Justification);
+                        style.FirstLineIndent = Inches(para.FirstLineIndent);
+                        style.LeftMargin = Inches(para.LeftMargin);
+                        style.RightMargin = Inches(para.RightMargin);
+                    }
+                    else if (info is INoteMarkerInfo)
+                    {
+                        style.Kind = MarkerKind.Note;
+                    }
+                    else if (info is ICharacterMarkerInfo)
+                    {
+                        style.Kind = MarkerKind.Character;
+                    }
+                    else
+                    {
+                        style.Kind = MarkerKind.Other;
+                    }
+                    if (info is IStyledMarkerInfo styled)
+                    {
+                        style.FontFamily = styled.FontFamily;
+                        style.FontSize = styled.FontSize;
+                        style.ColorArgb = styled.Color?.ToArgb();
+                        style.Bold = styled.Bold;
+                        style.Italic = styled.Italic;
+                        style.Superscript = styled.Superscript;
+                        style.Subscript = styled.Subscript;
+                        style.Underline = styled.Underline;
+                        style.SmallCaps = styled.SmallCaps;
+                    }
+                    result[info.Marker] = style;
+                }
+            }
+            catch (Exception) { /* fall back to no styling */ }
+            return result;
+        }
+
+        // Paratext stores stylesheet indents as thousandths of an inch (ScrTag.ParseF multiplies the .sty value by 1000)
+        static float? Inches(float? thousandths) => thousandths / 1000f;
+
+        static Alignment? ToAlignment(Justification? j)
+        {
+            switch (j)
+            {
+                case Justification.Left: return Alignment.Left;
+                case Justification.Center: return Alignment.Center;
+                case Justification.Right: return Alignment.Right;
+                case Justification.Both: return Alignment.Justify;
+                default: return null;
+            }
+        }
 
         bool HasBook(int book) => Project.AvailableBooks.Any(b => b.Number == book);
 

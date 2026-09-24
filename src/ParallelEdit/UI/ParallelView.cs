@@ -14,7 +14,8 @@ namespace ParallelEdit.UI
     public class ParallelView : UserControl
     {
         readonly ToolStrip toolbar;
-        readonly ToolStripButton textsButton, prevButton, nextButton, markersButton;
+        readonly ToolStripButton textsButton, prevButton, nextButton;
+        readonly ToolStripComboBox modeBox;
         readonly ToolStripTextBox refBox;
         readonly ToolStripLabel status;
         readonly Panel header;
@@ -46,9 +47,14 @@ namespace ParallelEdit.UI
             prevButton = new ToolStripButton("◀") { ToolTipText = "Previous chapter" };
             refBox = new ToolStripTextBox { AutoSize = false, Width = 90, ToolTipText = "Type a reference (e.g. MRK 3 or JHN 3:16) and press Enter" };
             nextButton = new ToolStripButton("▶") { ToolTipText = "Next chapter" };
-            markersButton = new ToolStripButton("Markers") { CheckOnClick = true, ToolTipText = "Show USFM markers in every cell (editable cells always show them while you type)" };
+            modeBox = new ToolStripComboBox { DropDownStyle = ComboBoxStyle.DropDownList, AutoSize = false,
+                ToolTipText = "Clean: plain text. Standard: styled text with markers shown in grey. Unformatted: raw USFM everywhere. Editable cells always show raw USFM while you type." };
+            modeBox.Items.AddRange(new object[] { "Clean", "Standard", "Unformatted" });
+            modeBox.SelectedIndex = 0;
+            // fit the longest mode name at any display scaling, plus room for the drop-down arrow
+            modeBox.Width = TextRenderer.MeasureText("Unformatted", Font).Width + SystemInformation.VerticalScrollBarWidth + 12;
             status = new ToolStripLabel("") { Alignment = ToolStripItemAlignment.Right, ForeColor = Theme.LabelText };
-            toolbar.Items.AddRange(new ToolStripItem[] { textsButton, new ToolStripSeparator(), prevButton, refBox, nextButton, new ToolStripSeparator(), markersButton, status });
+            toolbar.Items.AddRange(new ToolStripItem[] { textsButton, new ToolStripSeparator(), prevButton, refBox, nextButton, new ToolStripSeparator(), modeBox, status });
 
             header = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Theme.LabelBack };
             header.Paint += Header_Paint;
@@ -65,17 +71,17 @@ namespace ParallelEdit.UI
             textsButton.Click += (s, e) => ChooseTexts();
             prevButton.Click += (s, e) => MoveChapter(-1);
             nextButton.Click += (s, e) => MoveChapter(1);
-            markersButton.CheckedChanged += (s, e) => grid.ShowMarkers = markersButton.Checked;
+            modeBox.SelectedIndexChanged += (s, e) => grid.Mode = (ViewMode)modeBox.SelectedIndex;
             refBox.KeyDown += RefBox_KeyDown;
         }
 
         public IReadOnlyList<ITextSource> Texts => texts;
         public VerseRef Current => current;
 
-        public bool ShowMarkers
+        public ViewMode Mode
         {
-            get => markersButton.Checked;
-            set => markersButton.Checked = value;
+            get => (ViewMode)modeBox.SelectedIndex;
+            set { modeBox.SelectedIndex = (int)value; grid.Mode = value; }
         }
 
         /// <summary>Replaces the list of shown texts. The first one sets verse numbering (versification).</summary>

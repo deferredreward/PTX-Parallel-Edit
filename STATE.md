@@ -18,6 +18,23 @@ Paratext allows. See README for use and install.
   view modes must be built from `ScriptureMarkerInformation` (issue #3).
 - **Swapping a TextBox's text during mouse-down turns the click into a drag
   selection**; raw USFM is revealed on mouse-up instead (`VerseGrid.Reveal`).
+- **RichTextBox quirks** (cells are `RichTextBox` since view modes, issue #3):
+  `.Text` uses bare `\n` for every line break, including `\par` from RTF — no
+  `\r` at all, unlike `TextBox`'s `\r\n`. Setting `.Rtf` while the control is
+  still its old (smaller) height scrolls to keep the caret in view, hiding
+  earlier lines even after the control is later resized to fit — reset
+  `SelectionStart = 0` and call `ScrollToCaret()` after both setting `.Rtf`
+  and after any resize (`VerseGrid.SetRtf`, `LayoutRows`). `ContentsResized`
+  (EN_REQUESTRESIZE) only fires once `EM_SETEVENTMASK` has the
+  `ENM_REQUESTRESIZE` bit set — do that in `OnHandleCreated`, not before.
+  `Form.DrawToBitmap` does not render `RichTextBox` content at all; screenshot
+  by copying the real screen area instead (`TestHost.Snap`).
+- **The plugin API reports stylesheet indents in thousandths of an inch**
+  (`IParagraphMarkerInfo.FirstLineIndent`/`LeftMargin`/`RightMargin`: `\p`'s
+  `.125` arrives as 125; Paratext's `ScrTag.ParseF` multiplies by 1000).
+  `MarkerStyle` holds inches, so `ParatextTextSource` divides. The TestHost reads
+  `.sty` files directly in inches, so it cannot catch a unit slip here; only a
+  run inside Paratext does.
 - **Build**: .NET SDK (user-local `~\.dotnet` on this laptop), targets net48,
   references the plugin DLLs from the Paratext install dir
   (`-p:ParatextInstallDir=...` to override).

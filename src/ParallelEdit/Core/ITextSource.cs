@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace ParallelEdit.Core
 {
@@ -16,6 +17,9 @@ namespace ParallelEdit.Core
         string FontFamily { get; }
         float FontSize { get; }
         bool RightToLeft { get; }
+
+        /// <summary>Marker styles from the project's stylesheet, keyed by marker without its backslash. Never null.</summary>
+        IReadOnlyDictionary<string, MarkerStyle> MarkerStyles { get; }
 
         /// <summary>USFM of one chapter, or "" when the book or chapter does not exist.</summary>
         string GetChapterUsfm(int book, int chapter);

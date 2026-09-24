@@ -75,11 +75,11 @@ namespace ParallelEdit.Core
         static readonly Regex LeadingNumberRx = new Regex(@"^(\d+)(?:[a-z]?)(?:[-\u2013,](\d+))?", RegexOptions.Compiled);
 
         /// <summary>Section heading style markers: they belong to the verse that follows them.</summary>
-        static readonly HashSet<string> HeadingMarkers = new HashSet<string>(
+        internal static readonly HashSet<string> HeadingMarkers = new HashSet<string>(
             "s s1 s2 s3 s4 ms ms1 ms2 ms3 mr r sr sp d cl qa sd sd1 sd2 sd3 sd4".Split(' '));
 
         /// <summary>Paragraph markers; when they carry no text they belong to the verse that follows.</summary>
-        static readonly HashSet<string> ParagraphMarkers = new HashSet<string>(
+        internal static readonly HashSet<string> ParagraphMarkers = new HashSet<string>(
             ("p m po pr cls pmo pm pmc pmr pi pi1 pi2 pi3 pi4 mi nb pc ph ph1 ph2 ph3 b " +
              "q q1 q2 q3 q4 qr qc qm qm1 qm2 qm3 qd lh li li1 li2 li3 li4 lf lim lim1 lim2 lim3 lim4").Split(' '));
 
