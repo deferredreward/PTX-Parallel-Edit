@@ -14,7 +14,7 @@ namespace ParallelEdit
         public string Name => PluginName;
         public Version Version => GetType().Assembly.GetName().Version;
         public string VersionString => Version.ToString(3);
-        public string Publisher => "unfoldingWord";
+        public string Publisher => "Benjamin Wright, Wycliffe Bible Translators";
 
         public IEnumerable<WindowPluginMenuEntry> PluginMenuEntries
         {
