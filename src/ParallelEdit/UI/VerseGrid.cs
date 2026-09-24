@@ -301,7 +301,8 @@ namespace ParallelEdit.UI
         {
             var info = box.Info;
             // like Unformatted, the verse cell holds the verse's whole USFM, headings and paragraph markers included
-            var paragraphs = StyledText.Parse(info.Segment?.Get(info.Part) ?? "", null);
+            // trailing whitespace trimmed as in the other modes (RawText), so the verse's final line break adds no blank line
+            var paragraphs = StyledText.Parse(info.RawText, null);
             var styles = info.Chapter?.Source?.MarkerStyles ?? NoStyles;
             // the column's width, not box.Width: a new box is rendered before LayoutRows gives it its real size
             int widthTwips = (int)Math.Max(0, ((ColumnWidth - Scale(8)) / (float)Math.Max(1, DeviceDpi)) * 1440);

@@ -42,7 +42,7 @@ namespace TestHost
                     case "--edit": edit = true; break;
                     case "--markers": mode = ViewMode.Unformatted; break; // alias for --mode unformatted
                     case "--mode":
-                        if (!Enum.TryParse(args[++i], true, out mode)) throw new ArgumentException("--mode must be clean, standard or unformatted");
+                        if (!Enum.TryParse(args[++i], true, out mode) || !Enum.IsDefined(typeof(ViewMode), mode)) throw new ArgumentException("--mode must be clean, standard or unformatted");
                         break;
                     case "--readonly": readOnly.Add(args[++i]); break;
                     default: folders.Add(args[i]); break;
